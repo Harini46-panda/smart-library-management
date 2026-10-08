@@ -1,0 +1,315 @@
+{
+  "info": {
+    "name": "Smart Library Management System",
+    "description": "Full API flow across all five services. Run top to bottom within a folder - later requests depend on variables (memberId, bookId, borrowingId, fineId) saved by earlier ones via each request's Tests script.\n\nBefore running: start all five services (see README.md), then run this collection with the Postman Collection Runner, or click through requests manually in order.\n\nNote on the Fines folder: a fine is only generated once a borrowing is actually overdue. The happy-path Borrow -> Return in this collection completes within seconds, so it will NOT be overdue and 'Get Fines for Member' will legitimately return an empty list - that's correct behavior, not a bug. To see a real fine, either wait past the due date, run the Borrowing Service's overdue scheduler after adjusting a due_date directly in the database, or lower library.borrowing.loan-period-days to 0 temporarily and let the return happen a day later. 'Pay Fine' below detects whether an unpaid fine exists and skips its assertion (with a clear note) if not, rather than failing.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "memberServiceUrl", "value": "http://localhost:8081" },
+    { "key": "catalogServiceUrl", "value": "http://localhost:8082" },
+    { "key": "borrowingServiceUrl", "value": "http://localhost:8083" },
+    { "key": "fineServiceUrl", "value": "http://localhost:8084" },
+    { "key": "notificationServiceUrl", "value": "http://localhost:8085" },
+    { "key": "memberId", "value": "" },
+    { "key": "secondMemberId", "value": "" },
+    { "key": "bookId", "value": "" },
+    { "key": "borrowingId", "value": "" },
+    { "key": "fineId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "1. Members",
+      "item": [
+        {
+          "name": "Create Member",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Ananya Raghavan\",\n  \"email\": \"ananya.postman@example.com\",\n  \"phone\": \"9840012345\"\n}"
+            },
+            "url": { "raw": "{{memberServiceUrl}}/members", "host": ["{{memberServiceUrl}}"], "path": ["members"] }
+          },
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+            "const body = pm.response.json();",
+            "pm.test('Response has an id', () => pm.expect(body.id).to.be.a('number'));",
+            "pm.collectionVariables.set('memberId', body.id);"
+          ] } } ]
+        },
+        {
+          "name": "Create Second Member (for duplicate-borrow test)",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Karthik Subramaniam\",\n  \"email\": \"karthik.postman@example.com\",\n  \"phone\": \"9840023456\"\n}"
+            },
+            "url": { "raw": "{{memberServiceUrl}}/members", "host": ["{{memberServiceUrl}}"], "path": ["members"] }
+          },
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+            "pm.collectionVariables.set('secondMemberId', pm.response.json().id);"
+          ] } } ]
+        },
+        {
+          "name": "Get All Members",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{memberServiceUrl}}/members", "host": ["{{memberServiceUrl}}"], "path": ["members"] }
+          },
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+            "pm.test('Response is an array', () => pm.expect(pm.response.json()).to.be.an('array'));"
+          ] } } ]
+        },
+        {
+          "name": "Get Member By Id",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{memberServiceUrl}}/members/{{memberId}}", "host": ["{{memberServiceUrl}}"], "path": ["members", "{{memberId}}"] }
+          },
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+            "pm.test('Id matches', () => pm.expect(pm.response.json().id).to.eql(Number(pm.collectionVariables.get('memberId'))));"
+          ] } } ]
+        },
+        {
+          "name": "Get Member By Invalid Id (expect 404)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{memberServiceUrl}}/members/999999999", "host": ["{{memberServiceUrl}}"], "path": ["members", "999999999"] }
+          },
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status is 404', () => pm.response.to.have.status(404));"
+          ] } } ]
+        }
+      ]
+    },
+    {
+      "name": "2. Catalog",
+      "item": [
+        {
+          "name": "Create Book",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Clean Architecture\",\n  \"author\": \"Robert C. Martin\",\n  \"isbn\": \"9780134494166-postman\",\n  \"totalCopies\": 1\n}"
+            },
+            "url": { "raw": "{{catalogServiceUrl}}/books", "host": ["{{catalogServiceUrl}}"], "path": ["books"] },
+            "description": "totalCopies is intentionally 1, so the 'Borrow Same Book Again' request later in this collection can demonstrate the unavailable-book (409) path without any extra setup."
+          },
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+            "const body = pm.response.json();",
+            "pm.test('availableCopies equals totalCopies on create', () => pm.expect(body.availableCopies).to.eql(body.totalCopies));",
+            "pm.collectionVariables.set('bookId', body.id);"
+          ] } } ]
+        },
+        {
+          "name": "Get All Books",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{catalogServiceUrl}}/books", "host": ["{{catalogServiceUrl}}"], "path": ["books"] }
+          },
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+            "pm.test('Response is an array', () => pm.expect(pm.response.json()).to.be.an('array'));"
+          ] } } ]
+        },
+        {
+          "name": "Get Book By Id",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{catalogServiceUrl}}/books/{{bookId}}", "host": ["{{catalogServiceUrl}}"], "path": ["books", "{{bookId}}"] }
+          },
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status is 200', () => pm.response.to.have.status(200));"
+          ] } } ]
+        }
+      ]
+    },
+    {
+      "name": "3. Borrowing",
+      "item": [
+        {
+          "name": "Borrow Book",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"memberId\": {{memberId}},\n  \"bookId\": {{bookId}}\n}"
+            },
+            "url": { "raw": "{{borrowingServiceUrl}}/borrowings", "host": ["{{borrowingServiceUrl}}"], "path": ["borrowings"] }
+          },
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+            "const body = pm.response.json();",
+            "pm.test('Status is BORROWED', () => pm.expect(body.status).to.eql('BORROWED'));",
+            "pm.collectionVariables.set('borrowingId', body.id);"
+          ] } } ]
+        },
+        {
+          "name": "Borrow With Invalid Member (expect 400)",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "body": { "mode": "raw", "raw": "{\n  \"memberId\": 999999999,\n  \"bookId\": {{bookId}}\n}" },
+            "url": { "raw": "{{borrowingServiceUrl}}/borrowings", "host": ["{{borrowingServiceUrl}}"], "path": ["borrowings"] }
+          },
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status is 400', () => pm.response.to.have.status(400));"
+          ] } } ]
+        },
+        {
+          "name": "Borrow Same Book Again With Different Member (expect 409 unavailable)",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "body": { "mode": "raw", "raw": "{\n  \"memberId\": {{secondMemberId}},\n  \"bookId\": {{bookId}}\n}" },
+            "url": { "raw": "{{borrowingServiceUrl}}/borrowings", "host": ["{{borrowingServiceUrl}}"], "path": ["borrowings"] },
+            "description": "The book from '2. Catalog > Create Book' has only 1 total copy, and the previous request already borrowed it, so this should be rejected as unavailable."
+          },
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status is 409', () => pm.response.to.have.status(409));"
+          ] } } ]
+        },
+        {
+          "name": "Get All Borrowings",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{borrowingServiceUrl}}/borrowings", "host": ["{{borrowingServiceUrl}}"], "path": ["borrowings"] }
+          },
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status is 200', () => pm.response.to.have.status(200));"
+          ] } } ]
+        },
+        {
+          "name": "Get Borrowing By Id",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{borrowingServiceUrl}}/borrowings/{{borrowingId}}", "host": ["{{borrowingServiceUrl}}"], "path": ["borrowings", "{{borrowingId}}"] }
+          },
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status is 200', () => pm.response.to.have.status(200));"
+          ] } } ]
+        },
+        {
+          "name": "Return Book",
+          "request": {
+            "method": "PUT",
+            "url": { "raw": "{{borrowingServiceUrl}}/borrowings/{{borrowingId}}/return", "host": ["{{borrowingServiceUrl}}"], "path": ["borrowings", "{{borrowingId}}", "return"] }
+          },
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+            "pm.test('Status is RETURNED', () => pm.expect(pm.response.json().status).to.eql('RETURNED'));"
+          ] } } ]
+        },
+        {
+          "name": "Return Same Book Again (expect 409 duplicate)",
+          "request": {
+            "method": "PUT",
+            "url": { "raw": "{{borrowingServiceUrl}}/borrowings/{{borrowingId}}/return", "host": ["{{borrowingServiceUrl}}"], "path": ["borrowings", "{{borrowingId}}", "return"] }
+          },
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status is 409', () => pm.response.to.have.status(409));"
+          ] } } ]
+        }
+      ]
+    },
+    {
+      "name": "4. Fines",
+      "item": [
+        {
+          "name": "Get Fines for Member",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{fineServiceUrl}}/members/{{memberId}}/fines", "host": ["{{fineServiceUrl}}"], "path": ["members", "{{memberId}}", "fines"] }
+          },
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+            "pm.test('Response is an array', () => pm.expect(pm.response.json()).to.be.an('array'));",
+            "console.log('Note: empty is expected here unless the borrow/return above actually crossed the due date - see collection description.');"
+          ] } } ]
+        },
+        {
+          "name": "Get All Fines",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{fineServiceUrl}}/fines", "host": ["{{fineServiceUrl}}"], "path": ["fines"] }
+          },
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+            "const fines = pm.response.json();",
+            "const unpaid = fines.find(f => f.status === 'UNPAID');",
+            "if (unpaid) { pm.collectionVariables.set('fineId', unpaid.id); }",
+            "else { console.log('No unpaid fine exists yet - Pay Fine request below will skip its assertion.'); }"
+          ] } } ]
+        },
+        {
+          "name": "Pay Fine",
+          "request": {
+            "method": "PUT",
+            "url": { "raw": "{{fineServiceUrl}}/fines/{{fineId}}/pay", "host": ["{{fineServiceUrl}}"], "path": ["fines", "{{fineId}}", "pay"] },
+            "description": "Only meaningful if 'Get All Fines' found an unpaid fine and set {{fineId}}. See the collection-level description for why the happy-path flow above may not generate one."
+          },
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "if (!pm.collectionVariables.get('fineId')) {",
+            "  pm.test('Skipped: no unpaid fine was available to pay', () => pm.expect(true).to.be.true);",
+            "} else {",
+            "  pm.test('Status is 200', () => pm.response.to.have.status(200));",
+            "  pm.test('Status is PAID', () => pm.expect(pm.response.json().status).to.eql('PAID'));",
+            "}"
+          ] } } ]
+        },
+        {
+          "name": "Pay Same Fine Again (expect 409 if a fine was paid above)",
+          "request": {
+            "method": "PUT",
+            "url": { "raw": "{{fineServiceUrl}}/fines/{{fineId}}/pay", "host": ["{{fineServiceUrl}}"], "path": ["fines", "{{fineId}}", "pay"] }
+          },
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "if (!pm.collectionVariables.get('fineId')) {",
+            "  pm.test('Skipped: no fine was available', () => pm.expect(true).to.be.true);",
+            "} else {",
+            "  pm.test('Status is 409', () => pm.response.to.have.status(409));",
+            "}"
+          ] } } ]
+        }
+      ]
+    },
+    {
+      "name": "5. Notifications",
+      "item": [
+        {
+          "name": "Get All Notifications",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{notificationServiceUrl}}/notifications", "host": ["{{notificationServiceUrl}}"], "path": ["notifications"] }
+          },
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+            "pm.test('Response is an array', () => pm.expect(pm.response.json()).to.be.an('array'));"
+          ] } } ]
+        },
+        {
+          "name": "Get Notifications for Member",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{notificationServiceUrl}}/notifications/member/{{memberId}}", "host": ["{{notificationServiceUrl}}"], "path": ["notifications", "member", "{{memberId}}"] },
+            "description": "Event processing is asynchronous - if this runs immediately after 'Borrow Book' with no delay, the BOOK_BORROWED notification may not have arrived yet. Re-run after a second or two if the list looks empty."
+          },
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+            "pm.test('Response is an array', () => pm.expect(pm.response.json()).to.be.an('array'));"
+          ] } } ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>com.library</groupId>
+    <artifactId>smart-library-management</artifactId>
+    <version>1.0.0</version>
+    <packaging>pom</packaging>
+
+    <name>smart-library-management</name>
+    <description>Parent Maven build for the Smart Library Management microservices</description>
+
+    <modules>
+        <module>member-service</module>
+        <module>catalog-service</module>
+        <module>borrowing-service</module>
+        <module>fine-service</module>
+        <module>notification-service</module>
+        <module>authentication-service</module>
+        <module>api-gateway-service</module>
+        <module>audit-service</module>
+        <module>recommendation-service</module>
+    </modules>
+</project>
